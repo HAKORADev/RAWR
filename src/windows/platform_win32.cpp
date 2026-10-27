@@ -23,13 +23,20 @@ std::string executable_path() {
 }
 
 void prepare_output() {
-    // The shell build has no console of its own. If it was started from a
-    // terminal, borrow it. If it was started from Explorer, write the
-    // output to a log file next to the executable so the work is not
-    // lost.
+    // If the standard output is already going to a file or a pipe - that is
+    // what happens when the tool is piped into something else, and it is
+    // also what the build machine does - leave it alone.
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out != nullptr && out != INVALID_HANDLE_VALUE) {
+        DWORD type = GetFileType(out);
+        if (type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE) return;
+    }
+    // A console of its own, or one to borrow.
     if (GetConsoleWindow() != nullptr) return;
     if (AttachConsole(ATTACH_PARENT_PROCESS)) return;
 
+    // Nothing to print to: write the output to a log file next to the
+    // executable so the work is not lost.
     char exePath[MAX_PATH * 4];
     DWORD n = GetModuleFileNameA(nullptr, exePath, static_cast<DWORD>(sizeof(exePath)));
     std::string path;

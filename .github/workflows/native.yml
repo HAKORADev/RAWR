@@ -61,7 +61,7 @@ jobs:
           ./build/rawr --dry-run /nonexistent/path || test $? -eq 1
           ./build/rawr --dry-run /tmp || test $? -eq 0
           ./build/rawr version
-          ./build/rawr deps-check || true
+          ./build/rawr wrappers-list | head -5
 
       - name: exe size
         run: |
@@ -109,7 +109,14 @@ jobs:
 
       - name: built in self test
         shell: pwsh
-        run: .\build\Release\rawr-console.exe selftest
+        run: |
+          .\build\Release\rawr-console.exe selftest
+          if ($LASTEXITCODE -ne 0) {
+            Get-ChildItem build\Release\rawr-output-*.txt -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "== $($_.Name)"; Get-Content $_.FullName
+            }
+            exit $LASTEXITCODE
+          }
 
       - name: end to end test (synthetic fixture)
         shell: pwsh
