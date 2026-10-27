@@ -119,6 +119,7 @@ jobs:
           # here is expected and is not a failure.
           .\build\Release\rawr.exe deps-check
           Write-Host "deps-check exit: $LASTEXITCODE (expected non zero on a bare runner)"
+          exit 0
 
       - name: exe size
         shell: pwsh
