@@ -267,7 +267,7 @@ int cli_run(const CliOptions& options) {
             report.notes = result.notes;
             failures++;
             reports.push_back(report);
-            if (!options.quiet) {
+            if (!options.quiet && !options.json) {
                 std::cout << "  [x] " << raw << ": " << err << "\n";
                 if (options.verbose)
                     for (const std::string& note : result.notes) std::cout << "      " << note << "\n";
@@ -291,8 +291,7 @@ int cli_run(const CliOptions& options) {
         reports.push_back(report);
 
         if (options.quiet || options.json) continue;
-        if (report.status == "already-clean") {
-            std::cout << "  [=] " << raw << ": " << report.detail << "\n";
+        if (report.status == "already-clean") {            std::cout << "  [=] " << raw << ": " << report.detail << "\n";
         } else {
             std::cout << "  [+] " << raw << ": wrapper removed -> " << result.gameExePath << "\n";
             if (!result.method.empty()) std::cout << "      seed method: " << result.method << "\n";

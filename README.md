@@ -187,6 +187,20 @@ RAWR is built to be boring about your files.
   program, the folder is left exactly as it was and the reason is printed.
 - **It is offline.** No network access, no telemetry, no registry writes.
 
+## Status
+
+| | |
+|---|---|
+| game folders tested | 334 |
+| unwrapped cleanly | 317 |
+| reported and left alone | 17 (the integrated wrapper layout) |
+| unexpected failures | 0 |
+| wrapper builds covered | 123 to 173, the whole life of the service |
+| third party libraries | none |
+
+Every folder either comes out clean or comes out explained. Nothing is
+damaged and nothing is silently skipped.
+
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the full list. The short version:

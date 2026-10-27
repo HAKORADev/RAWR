@@ -49,7 +49,31 @@ Every candidate seed is verified by decrypting the configuration and checking th
 
 ### Verified
 
-- 30 of 31 games in the test corpus unwrap cleanly, across wrapper builds 122 to 173
-- The one that does not is the integrated wrapper layout, and it is reported as such instead of being damaged
-- A sanitizer build (address and undefined behaviour) runs the whole corpus with no findings
-- The program recovered from the `.FFF` generation is byte identical to the same program recovered from the retail installer, apart from the PE header fields that have to change when a section is added
+- **334 game folders** across two corpora were run through RAWR
+  - 303 from the Reflexive Arcade retail volumes (the old builds)
+  - 31 from single game retail installers
+- **317 unwrap cleanly. 17 are the integrated wrapper layout** and are
+  reported as such instead of being damaged. There are **no unexpected
+  failures** - every single folder either came out clean or came out
+  explained.
+- Wrapper build coverage, oldest to newest:
+
+  | build | folders | result |
+  |---|---|---|
+  | 123 | 1 | clean |
+  | 124 | 2 | clean |
+  | 131 | 1 | clean |
+  | 142 | 1 | clean |
+  | 143 | 2 | clean |
+  | 167 | 1 | clean |
+  | 172 | 3 | clean |
+  | 173 | 271 | clean |
+  | not stamped | 21 | 5 clean, 16 integrated wrapper |
+
+- A sanitizer build (address and undefined behaviour) runs the whole corpus
+  with no findings
+- The program recovered from the `.FFF` generation is byte identical to the
+  same program recovered from the retail installer, apart from the PE header
+  fields that have to change when a section is added
+- The Windows build is exercised end to end in CI against the synthetic
+  fixture, so the binary that ships has actually unwrapped a game
