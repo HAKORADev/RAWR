@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <map>
+#include <set>
 
 namespace rawr {
 namespace {
@@ -32,6 +33,11 @@ inline void wr32(Bytes& d, size_t o, uint32_t v) {
 inline uint32_t align_up(uint32_t value, uint32_t alignment) {
     if (alignment == 0) return value;
     return (value + alignment - 1) / alignment * alignment;
+}
+
+// The data directories start at a different offset in PE32 and PE32+.
+inline uint32_t data_dir_offset(const PeImage& pe) {
+    return pe.optionalOffset + (pe.is64 ? 112u : 96u);
 }
 
 std::string utf16_to_utf8(const Bytes& d, size_t offset, size_t charCount) {
@@ -278,7 +284,9 @@ Bytes build_resource_section(const std::vector<ResourceLeaf>& leaves, uint32_t b
         uint16_t id = 0;
         std::string str;
         bool operator<(const NameKey& o) const {
-            if (named != o.named) return named < o.named; // named (0) first
+            // Named entries have to come before the numbered ones, and both
+            // groups have to be sorted.
+            if (named != o.named) return named;   // named (true) sorts first
             if (named) return str < o.str;
             return id < o.id;
         }
@@ -288,7 +296,7 @@ Bytes build_resource_section(const std::vector<ResourceLeaf>& leaves, uint32_t b
         uint16_t id = 0;
         std::string str;
         bool operator<(const TypeKey& o) const {
-            if (named != o.named) return named < o.named;
+            if (named != o.named) return named;
             if (named) return str < o.str;
             return id < o.id;
         }
@@ -598,7 +606,9 @@ bool pe_write_resources(Bytes& image, const std::vector<ResourceLeaf>& leaves, s
         if (!pe_read_resources(pe, merged, err)) return false;
     }
 
-    // Replace leaves with the same key, keep everything else.
+    // The image's own resources always win. A wrapper's resource is only
+    // added when the image does not already carry that exact key, so a
+    // wrapper can never shadow what the game shipped with.
     auto sameKey = [](const ResourceLeaf& a, const ResourceLeaf& b) {
         if (a.typeIsNamed != b.typeIsNamed || a.nameIsNamed != b.nameIsNamed) return false;
         if (a.typeIsNamed) { if (a.typeName != b.typeName) return false; }
@@ -608,15 +618,14 @@ bool pe_write_resources(Bytes& image, const std::vector<ResourceLeaf>& leaves, s
         return a.language == b.language;
     };
     for (const ResourceLeaf& leaf : leaves) {
-        bool replaced = false;
-        for (ResourceLeaf& existing : merged) {
-            if (sameKey(existing, leaf)) {
-                existing.data = leaf.data;
-                replaced = true;
-                break;
-            }
+        bool alreadyThere = false;
+        for (const ResourceLeaf& existing : merged) {
+            if (sameKey(existing, leaf)) { alreadyThere = true; break; }
         }
-        if (!replaced) merged.push_back(leaf);
+        if (!alreadyThere) merged.push_back(leaf);
+    }
+    if (merged.size() == (pe_has_resources(pe) ? merged.size() : 0)) {
+        // nothing new to add
     }
 
     // If the image already owns a resource section that can hold the new
@@ -629,10 +638,9 @@ bool pe_write_resources(Bytes& image, const std::vector<ResourceLeaf>& leaves, s
                 image.resize(static_cast<size_t>(s.pointerToRawData) + trial.size(), 0);
             std::memset(image.data() + s.pointerToRawData, 0, s.sizeOfRawData);
             std::memcpy(image.data() + s.pointerToRawData, trial.data(), trial.size());
-            wr32(image, pe.optionalOffset + 96 + kResourceDirIndex * 8,
-                 s.virtualAddress);
-            wr32(image, pe.optionalOffset + 96 + kResourceDirIndex * 8 + 4,
-                 static_cast<uint32_t>(trial.size()));
+            uint32_t dirOffset = data_dir_offset(pe);
+            wr32(image, dirOffset + kResourceDirIndex * 8, s.virtualAddress);
+            wr32(image, dirOffset + kResourceDirIndex * 8 + 4, static_cast<uint32_t>(trial.size()));
             return true;
         }
         break;
@@ -656,7 +664,6 @@ bool pe_write_resources(Bytes& image, const std::vector<ResourceLeaf>& leaves, s
     // The appended section may have landed on a different RVA than predicted.
     if (actualRva != sectionRva) {
         tree = build_resource_section(merged, actualRva);
-        // Rewrite the appended section content in place.
         PeImage after;
         if (!pe_parse(image, after, err)) return false;
         for (const PeSection& s : after.sections) {
@@ -673,10 +680,93 @@ bool pe_write_resources(Bytes& image, const std::vector<ResourceLeaf>& leaves, s
 
     PeImage final;
     if (!pe_parse(image, final, err)) return false;
-    uint32_t dirOffset = final.optionalOffset + 96 + kResourceDirIndex * 8;
-    wr32(image, dirOffset, actualRva);
-    wr32(image, dirOffset + 4, static_cast<uint32_t>(tree.size()));
+    uint32_t dirOffset = data_dir_offset(final);
+    wr32(image, dirOffset + kResourceDirIndex * 8, actualRva);
+    wr32(image, dirOffset + kResourceDirIndex * 8 + 4, static_cast<uint32_t>(tree.size()));
     return true;
+}
+
+bool pe_has_icon_group(const PeImage& pe, std::string& err) {
+    if (!pe_has_resources(pe)) return false;
+    std::vector<ResourceLeaf> leaves;
+    if (!pe_read_resources(pe, leaves, err)) return false;
+    for (const ResourceLeaf& leaf : leaves)
+        if (!leaf.typeIsNamed && leaf.type == kRtGroupIcon) return true;
+    return false;
+}
+
+bool pe_add_icon(Bytes& image, const IconSet& icon, std::string& err) {
+    if (icon.group.size() < 6 || icon.images.empty()) return false;
+
+    PeImage pe;
+    if (!pe_parse(image, pe, err)) return false;
+
+    std::vector<ResourceLeaf> leaves;
+    if (pe_has_resources(pe) && !pe_read_resources(pe, leaves, err)) return false;
+
+    // The game already has an icon of its own. It always wins: the shell
+    // looks for the group called "MAINICON" first, so a wrapper's group
+    // would shadow the game's and the game would lose its own artwork.
+    for (const ResourceLeaf& leaf : leaves)
+        if (!leaf.typeIsNamed && leaf.type == kRtGroupIcon) return false;
+
+    // Find a free range of icon ids and remap the group onto it.
+    std::set<uint16_t> used;
+    uint16_t groupIdTaken = 0;
+    for (const ResourceLeaf& leaf : leaves) {
+        if (leaf.typeIsNamed) continue;
+        if (leaf.type == kRtIcon && !leaf.nameIsNamed) used.insert(leaf.nameId);
+        if (leaf.type == kRtGroupIcon && !leaf.nameIsNamed) groupIdTaken = leaf.nameId;
+    }
+
+    std::map<uint16_t, uint16_t> mapping;
+    std::vector<ResourceLeaf> newIcons;
+    uint16_t next = 1;
+    for (const auto& img : icon.images) {
+        while (used.count(next)) ++next;
+        used.insert(next);
+        mapping[img.first] = next;
+        ResourceLeaf leaf;
+        leaf.type = kRtIcon;
+        leaf.nameId = next;
+        leaf.language = icon.language;
+        leaf.data = img.second;
+        newIcons.push_back(leaf);
+    }
+
+    // Rewrite the group so it points at the remapped ids.
+    Bytes group = icon.group;
+    uint16_t count = static_cast<uint16_t>(group[4] | (group[5] << 8));
+    for (uint16_t i = 0; i < count; ++i) {
+        size_t off = 6 + static_cast<size_t>(i) * 14;
+        if (off + 14 > group.size()) break;
+        uint16_t oldId = static_cast<uint16_t>(group[off + 12] | (group[off + 13] << 8));
+        auto it = mapping.find(oldId);
+        uint16_t newId = (it != mapping.end()) ? it->second : 0;
+        group[off + 12] = static_cast<uint8_t>(newId & 0xFF);
+        group[off + 13] = static_cast<uint8_t>((newId >> 8) & 0xFF);
+    }
+
+    // Register the group under the name the shell looks for first, and
+    // under id 1 as well when that id is free.
+    ResourceLeaf named;
+    named.type = kRtGroupIcon;
+    named.nameIsNamed = true;
+    named.nameString = "MAINICON";
+    named.language = icon.language;
+    named.data = group;
+    newIcons.push_back(named);
+
+    if (groupIdTaken == 0) {
+        ResourceLeaf byId;
+        byId.type = kRtGroupIcon;
+        byId.nameId = 1;
+        byId.language = icon.language;
+        byId.data = group;
+        newIcons.push_back(byId);
+    }
+
+    return pe_write_resources(image, newIcons, err);
 }
 
 bool pe_looks_like_program(const Bytes& data, std::string& err) {

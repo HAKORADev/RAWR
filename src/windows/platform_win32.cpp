@@ -2,30 +2,10 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
-#include <sstream>
+#include <windows.h>
 
 namespace rawr {
 namespace platform {
-namespace {
-
-bool haveCommand(const std::string& name) {
-    const char* path = std::getenv("PATH");
-    if (!path) return false;
-    std::stringstream ss(path);
-    std::string dir;
-    while (std::getline(ss, dir, ';')) {
-        if (dir.empty()) continue;
-        for (const char* ext : {"", ".exe", ".cmd", ".bat"}) {
-            std::string full = dir + "\\" + name + ext;
-            std::ifstream probe(full, std::ios::binary);
-            if (probe.good()) return true;
-        }
-    }
-    return false;
-}
-
-} // namespace
 
 bool is_static_build() {
 #if defined(RAWR_STATIC_BUILD)
@@ -35,49 +15,41 @@ bool is_static_build() {
 #endif
 }
 
-std::vector<Dependency> check_build_dependencies() {
-    std::vector<Dependency> deps;
-    deps.push_back({"cmake", "configures the build", "winget install Kitware.CMake", haveCommand("cmake")});
-    deps.push_back({"git", "version control", "winget install Git.Git", haveCommand("git")});
-    deps.push_back({"ninja", "faster build driver", "winget install Ninja-build.Ninja", haveCommand("ninja")});
-    deps.push_back({"cl", "MSVC compiler (Visual Studio Build Tools)",
-                    "winget install Microsoft.VisualStudio.2022.BuildTools", haveCommand("cl")});
-    return deps;
+std::string executable_path() {
+    char buffer[MAX_PATH * 4];
+    DWORD n = GetModuleFileNameA(nullptr, buffer, static_cast<DWORD>(sizeof(buffer)));
+    if (n == 0 || n >= sizeof(buffer)) return std::string();
+    return std::string(buffer, n);
 }
 
-bool install_build_dependencies(std::vector<Dependency>& missing, std::string& err) {
-    if (missing.empty()) return true;
+void prepare_output() {
+    // The shell build has no console of its own. If it was started from a
+    // terminal, borrow it. If it was started from Explorer, write the
+    // output to a log file next to the executable so the work is not
+    // lost.
+    if (GetConsoleWindow() != nullptr) return;
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) return;
 
-    bool winget = haveCommand("winget");
-    bool choco = haveCommand("choco");
-    if (!winget && !choco) {
-        err = "neither winget nor chocolatey was found; install the listed tools manually";
-        return false;
-    }
+    char exePath[MAX_PATH * 4];
+    DWORD n = GetModuleFileNameA(nullptr, exePath, static_cast<DWORD>(sizeof(exePath)));
+    std::string path;
+    if (n > 0 && n < sizeof(exePath)) path.assign(exePath, n);
 
-    for (const Dependency& d : missing) {
-        std::string package;
-        if (d.name == "cmake") package = "Kitware.CMake";
-        else if (d.name == "git") package = "Git.Git";
-        else if (d.name == "ninja") package = "Ninja-build.Ninja";
-        else if (d.name == "cl") package = "Microsoft.VisualStudio.2022.BuildTools";
-        else continue;
+    std::string dir = ".";
+    size_t slash = path.find_last_of("\\/");
+    if (slash != std::string::npos) dir = path.substr(0, slash);
 
-        std::string command;
-        if (winget) {
-            command = "winget install --id " + package +
-                      " --accept-package-agreements --accept-source-agreements --silent";
-        } else {
-            command = "choco install " + package + " -y";
-        }
-        std::printf("  installing %s ...\n", d.name.c_str());
-        int rc = std::system(command.c_str());
-        if (rc != 0) {
-            err = "the package manager failed while installing " + d.name;
-            return false;
-        }
-    }
-    return true;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char name[128];
+    std::snprintf(name, sizeof(name), "rawr-output-%04d%02d%02d-%02d%02d%02d.txt", st.wYear,
+                  st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    std::string logPath = dir + "\\" + name;
+
+    FILE* f = freopen(logPath.c_str(), "w", stdout);
+    if (f) setvbuf(stdout, nullptr, _IOLBF, 0);
+    FILE* e = freopen(logPath.c_str(), "a", stderr);
+    if (e) setvbuf(stderr, nullptr, _IOLBF, 0);
 }
 
 } // namespace platform

@@ -8,6 +8,8 @@
 #include <set>
 
 #include "crc32.h"
+#include "integrated.h"
+#include "popcap.h"
 #include "fsutil.h"
 #include "stream_cipher.h"
 
@@ -329,18 +331,17 @@ Region dotnet_region(const PeImage& pe) {
     return r;
 }
 
-// Picks the wrapper's own icon group and the manifest / version info.
-bool harvest_resources(const Bytes& wrapper, std::vector<ResourceLeaf>& out, size_t& count) {
-    out.clear();
-    count = 0;
+// Picks the wrapper's own icon group. The preferred group is the one called
+// "MAINICON"; when there is no such group the largest one wins.
+bool harvest_icon(const Bytes& wrapper, IconSet& out) {
+    out = IconSet();
     std::string err;
     PeImage pe;
     if (!pe_parse(wrapper, pe, err)) return false;
     std::vector<ResourceLeaf> leaves;
     if (!pe_read_resources(pe, leaves, err)) return false;
-    if (leaves.empty()) return true;
+    if (leaves.empty()) return false;
 
-    // Preferred group icon.
     const ResourceLeaf* preferred = nullptr;
     size_t bestCount = 0;
     for (const ResourceLeaf& leaf : leaves) {
@@ -356,47 +357,47 @@ bool harvest_resources(const Bytes& wrapper, std::vector<ResourceLeaf>& out, siz
             preferred = &leaf;
         }
     }
+    if (!preferred) return false;
 
-    if (preferred) {
-        // Collect the icon ids the group points at.
-        std::set<uint16_t> iconIds;
-        const Bytes& grp = preferred->data;
-        if (grp.size() >= 6) {
-            uint16_t n = static_cast<uint16_t>(grp[4] | (grp[5] << 8));
-            for (uint16_t i = 0; i < n; ++i) {
-                size_t off = 6 + static_cast<size_t>(i) * 14;
-                if (off + 14 > grp.size()) break;
-                uint16_t id = static_cast<uint16_t>(grp[off + 12] | (grp[off + 13] << 8));
-                iconIds.insert(id);
-            }
+    // Collect the images the group points at.
+    std::set<uint16_t> iconIds;
+    const Bytes& grp = preferred->data;
+    if (grp.size() >= 6) {
+        uint16_t n = static_cast<uint16_t>(grp[4] | (grp[5] << 8));
+        for (uint16_t i = 0; i < n; ++i) {
+            size_t off = 6 + static_cast<size_t>(i) * 14;
+            if (off + 14 > grp.size()) break;
+            iconIds.insert(static_cast<uint16_t>(grp[off + 12] | (grp[off + 13] << 8)));
         }
-        for (const ResourceLeaf& leaf : leaves) {
-            if (leaf.typeIsNamed || leaf.type != kRtIcon) continue;
-            if (!iconIds.empty() && iconIds.find(leaf.nameId) == iconIds.end()) continue;
-            out.push_back(leaf);
-            ++count;
-        }
-        out.push_back(*preferred);
-        ++count;
     }
-
-    // Manifest and version info travel with the game.
     for (const ResourceLeaf& leaf : leaves) {
-        if (leaf.typeIsNamed) continue;
-        if (leaf.type == kRtManifest || leaf.type == kRtVersion) {
-            bool duplicate = false;
-            for (const ResourceLeaf& existing : out) {
-                if (existing.type == leaf.type && existing.nameId == leaf.nameId &&
-                    existing.language == leaf.language) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                out.push_back(leaf);
-                ++count;
-            }
+        if (leaf.typeIsNamed || leaf.type != kRtIcon) continue;
+        if (!iconIds.empty() && iconIds.find(static_cast<uint16_t>(leaf.nameId)) == iconIds.end())
+            continue;
+        out.images.emplace_back(static_cast<uint16_t>(leaf.nameId), leaf.data);
+    }
+    if (out.images.empty()) return false;
+    out.group = preferred->data;
+    out.language = preferred->language;
+    return true;
+}
+
+// The manifest and the version information travel with the game.
+bool harvest_extras(const Bytes& wrapper, std::vector<ResourceLeaf>& out) {
+    out.clear();
+    std::string err;
+    PeImage pe;
+    if (!pe_parse(wrapper, pe, err)) return false;
+    std::vector<ResourceLeaf> leaves;
+    if (!pe_read_resources(pe, leaves, err)) return false;
+    for (const ResourceLeaf& leaf : leaves) {
+        if (leaf.typeIsNamed) {
+            // A named resource type, for example the "IMAGE" type some
+            // Delphi builds use for their version information.
+            if (leaf.typeName == "IMAGE" || leaf.typeName == "VERSION") out.push_back(leaf);
+            continue;
         }
+        if (leaf.type == kRtManifest || leaf.type == kRtVersion) out.push_back(leaf);
     }
     return true;
 }
@@ -485,8 +486,17 @@ bool detect_reflexive(const std::string& dir, ReflexiveLayout& out, std::string&
     }
 
     if (!hasDll && !hasReflexDir && out.rwgPath.empty()) {
+        // Not a Reflexive game. It could still be another wrapper family.
+        PopcapResult pc;
+        std::string perr;
+        if (detect_popcap(dir, pc, perr) && pc.detected) {
+            out.layout = WrapperLayout::PopCap;
+            out.reason = pc.detail;
+            out.popcap = pc;
+            return true;
+        }
         out.layout = WrapperLayout::NotReflexive;
-        out.reason = "no Reflexive Arcade markers found";
+        out.reason = "no known wrapper found";
         return true;
     }
 
@@ -583,14 +593,62 @@ bool unwrap_folder(const std::string& dir, const UnwrapOptions& options, UnwrapR
         result.notes.push_back(layout.reason);
         return true;
     }
+    if (layout.layout == WrapperLayout::PopCap) {
+        PopcapResult pc;
+        std::string perr;
+        if (!unwrap_popcap(dir, options.dryRun, pc, perr)) {
+            err = perr;
+            return false;
+        }
+        if (!pc.unwrapped) {
+            result.alreadyClean = true;
+            result.notes.push_back(pc.detail.empty() ? "no PopCap wrapper here" : pc.detail);
+            return true;
+        }
+        result.gameExePath = pc.stubPath;
+        result.method = "popcap_real_game";
+        result.registered = pc.partnerFlipped;
+        result.notes.push_back("the hidden real game replaced the trial stub");
+        if (pc.partnerFlipped) result.notes.push_back("partner.xml now says the game is registered");
+        result.changed = true;
+        return true;
+    }
+
     if (layout.layout == WrapperLayout::Incomplete) {
         err = layout.reason;
         return false;
     }
     if (layout.layout == WrapperLayout::Integrated) {
-        err = layout.reason +
-              " - this layout is not unwrappable yet (see ROADMAP.md, integrated wrappers)";
-        return false;
+        // The binding layer is compiled into the game executable. The
+        // support folder has to stay, because the library also draws the
+        // frames. The only thing worth changing is the answer to the
+        // purchase question.
+        if (layout.wrapperExe.empty()) {
+            err = "the integrated layout has no game executable to patch";
+            return false;
+        }
+        Bytes gameData;
+        if (!read_file(layout.wrapperExe, gameData, err)) return false;
+        IntegratedPatchResult patch;
+        std::string perr;
+        if (!patch_mark_registered(gameData, patch, perr)) {
+            err = "the purchase check could not be patched: " + perr;
+            return false;
+        }
+        if (!options.dryRun) {
+            std::string werr;
+            if (!write_file_atomic(layout.wrapperExe, gameData, werr)) {
+                err = werr;
+                return false;
+            }
+        }
+        result.registered = true;
+        result.gameExePath = layout.wrapperExe;
+        result.method = "integrated_purchase_check";
+        result.notes.push_back("the purchase check was patched; the support folder was kept because "
+                               "the library also draws the frames");
+        result.changed = true;
+        return true;
     }
 
     // ---------------------------------------------------------------
@@ -820,17 +878,25 @@ bool unwrap_folder(const std::string& dir, const UnwrapOptions& options, UnwrapR
         result.notes.push_back("the decrypted entry point does not match the usual code patterns");
     }
 
-    // Resource restoration: give the recovered game the icon the wrapper kept.
-    std::vector<ResourceLeaf> resources;
-    size_t resourceCount = 0;
+    // Resource restoration. The game keeps its own artwork; the wrapper's
+    // icon is only a fallback for games that never had one.
+    std::vector<ResourceLeaf> extras;
+    IconSet icon;
     if (options.restoreResources) {
         std::string rerr;
-        if (harvest_resources(wrapperData, resources, resourceCount) && resourceCount > 0) {
-            if (!pe_write_resources(recovered, resources, rerr)) {
-                result.notes.push_back("resource restore failed: " + rerr);
-            } else {
+        if (harvest_extras(wrapperData, extras) && !extras.empty()) {
+            if (!pe_write_resources(recovered, extras, rerr))
+                result.notes.push_back("the manifest and version information could not be carried over: " + rerr);
+            else
                 result.resourcesRestored = true;
-                result.resourcesRestoredCount = resourceCount;
+        }
+        if (harvest_icon(wrapperData, icon)) {
+            std::string ierr;
+            if (pe_add_icon(recovered, icon, ierr)) {
+                result.resourcesRestored = true;
+                result.resourcesRestoredCount += static_cast<size_t>(icon.images.size());
+            } else if (!ierr.empty()) {
+                result.notes.push_back("the icon could not be carried over: " + ierr);
             }
         }
     }

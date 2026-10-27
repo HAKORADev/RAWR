@@ -77,9 +77,7 @@ jobs:
         run: |
           mkdir -p dist/rawr
           cp build/rawr dist/rawr/
-          cp packaging/linux/cli.sh dist/rawr/
-          cp packaging/linux/install.sh dist/rawr/
-          chmod +x dist/rawr/rawr dist/rawr/cli.sh dist/rawr/install.sh
+          chmod +x dist/rawr/rawr
           (cd dist && zip -qr ../"rawr_linux_v${{ inputs.version }}.zip" rawr)
 
       - uses: actions/upload-artifact@v4
@@ -98,42 +96,51 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DRAWR_STATIC=ON
           cmake --build build --config Release -j 4
 
+      - name: the shell build carries the long path manifest
+        shell: pwsh
+        run: |
+          $rc = Get-Item build\Release\rawr.exe
+          Write-Host "shell build: $($rc.Length) bytes"
+          # the manifest has to be embedded, otherwise long paths stay off
+          $bytes = [System.IO.File]::ReadAllBytes($rc.FullName)
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if ($text -notmatch "longPathAware") { throw "the long path manifest is missing" }
+          Write-Host "longPathAware manifest found"
+
       - name: built in self test
         shell: pwsh
-        run: .\build\Release\rawr.exe selftest
+        run: .\build\Release\rawr-console.exe selftest
 
       - name: end to end test (synthetic fixture)
         shell: pwsh
         run: |
           $env:Path = "$(Resolve-Path .\build\Release);$env:Path"
-          bash ./tests/e2e.sh ./build/Release/rawr.exe
+          bash ./tests/e2e.sh ./build/Release/rawr-console.exe
 
       - name: dry run and error handling
         shell: pwsh
         run: |
-          .\build\Release\rawr.exe --dry-run C:\definitely\not\here
+          .\build\Release\rawr-console.exe --dry-run C:\definitely\not\here
           if ($LASTEXITCODE -ne 1) { throw "a missing path should exit 1" }
-          .\build\Release\rawr.exe version
-          # deps-check reports the build toolchain; on a runner the compiler
-          # is not on PATH outside a developer prompt, so a non zero exit
-          # here is expected and is not a failure.
-          .\build\Release\rawr.exe deps-check
-          Write-Host "deps-check exit: $LASTEXITCODE (expected non zero on a bare runner)"
+          .\build\Release\rawr-console.exe version
+          Write-Host "deps-check was removed on purpose; nothing to report"
           exit 0
 
       - name: exe size
         shell: pwsh
         run: |
-          $f = Get-Item build\Release\rawr.exe
-          $f | Select-Object Name,Length
-          if ($f.Length -gt 31457280) { throw "the binary is over 30 MB" }
+          foreach ($f in @("build\Release\rawr.exe", "build\Release\rawr-console.exe")) {
+            $i = Get-Item $f
+            $i | Select-Object Name,Length
+            if ($i.Length -gt 31457280) { throw "the binary is over 30 MB" }
+          }
 
       - name: collect portable bundle
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist\rawr | Out-Null
           Copy-Item build\Release\rawr.exe dist\rawr\
-          Copy-Item packaging\windows\cli.bat dist\rawr\
+          Copy-Item build\Release\rawr-console.exe dist\rawr\
           Compress-Archive -Path dist\rawr -DestinationPath "rawr_windows_v${{ inputs.version }}.zip"
 
       - uses: actions/upload-artifact@v4

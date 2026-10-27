@@ -1,0 +1,5 @@
+// Windows resources for RAWR: the application manifest, which is what
+// turns on long path support and declares the supported Windows versions.
+#include <windows.h>
+
+1 RT_MANIFEST "rawr.manifest"

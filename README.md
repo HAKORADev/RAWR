@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/rawr.png" alt="RAWR logo" width="128" height="128"/>
+  <img src="assets/rawr.png" alt="RAWR logo" width="160" height="160"/>
 </p>
 
 ---
@@ -22,6 +22,9 @@ touches a file it does not own.
 
 ```bash
 rawr "/games/Cannon Blast" "/games/Diamond Drop"
+
+# or point it at a whole library and let it find the games
+rawr ~/games/
 ```
 
 ---
@@ -90,12 +93,12 @@ nothing to install and nothing to uninstall.
 ## Usage
 
 ```
-rawr <folder> [<folder> ...]        remove the wrapper from every given game folder
-rawr deps-check                    report the build dependencies and their status
-rawr deps-install                  install the missing build dependencies
-rawr selftest                      run the built in checks
-rawr version                       print the version
-rawr help                          print the usage
+rawr <path> [<path> ...]        remove the wrapper from every game it finds
+rawr detect <path> [...]        report what a folder is, change nothing
+rawr wrappers-list              show the wrappers RAWR knows about
+rawr selftest [tests folder]    run the built in checks
+rawr version                   print the version
+rawr help                      print the usage
 ```
 
 | Option | Meaning |
@@ -105,6 +108,7 @@ rawr help                          print the usage
 | `-q`, `--quiet` | only report failures |
 | `--no-resources` | do not carry the icon and manifest over |
 | `--keep-temp` | keep the stage folder instead of deleting it |
+| `--no-report` | do not write the report file |
 | `--json` | print the result as JSON, for scripts |
 
 ### Examples
@@ -113,8 +117,14 @@ rawr help                          print the usage
 # see what would happen, change nothing
 rawr --dry-run ~/games/Cannon\ Blast
 
-# unwrap a whole library
-rawr ~/games/*/
+# unwrap a whole library: RAWR walks the tree and finds the games itself
+rawr ~/games/
+
+# what is this folder, without touching it?
+rawr detect ~/games/Cannon\ Blast
+
+# what does RAWR know about?
+rawr wrappers-list
 
 # machine readable, for a batch script
 rawr --json ~/games/Cannon\ Blast | jq '.results[0].status'
@@ -193,13 +203,19 @@ RAWR is built to be boring about your files.
 |---|---|
 | game folders tested | 334 |
 | unwrapped cleanly | 317 |
-| reported and left alone | 17 (the integrated wrapper layout) |
+| marked as registered | 17 (the integrated wrapper layout) |
 | unexpected failures | 0 |
 | wrapper builds covered | 123 to 173, the whole life of the service |
+| wrapper families supported | Reflexive Arcade (both layouts) and PopCap |
 | third party libraries | none |
 
 Every folder either comes out clean or comes out explained. Nothing is
 damaged and nothing is silently skipped.
+
+**The publishers that still sell games are left alone.** GameHouse, iWin,
+Zylom, GameTop and FreeGamePick are all trading today, and their time
+limits are the product they sell against. RAWR is for the games whose
+publisher is gone.
 
 ## Roadmap
 
@@ -218,17 +234,16 @@ party libraries.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ./build/rawr selftest
-```
-
-Or, if you do not have the toolchain yet:
-
-```bash
-rawr deps-check      # reports what is missing
-rawr deps-install    # installs it (apt-get / winget / choco)
+./build/rawr selftest tests     # also runs the script tests
 ```
 
 The Linux build is fully static. The Windows build uses the static MSVC
-runtime (`/MT`) so the released binary has no DLL dependencies.
+runtime (`/MT`) so the released binary has no DLL dependencies, and ships
+twice: `rawr.exe` is the shell build with no console window, and
+`rawr-console.exe` is the same program with a terminal attached.
+
+On Windows the executable also carries an application manifest that turns
+on **long path support**, which the deeply nested Reflexive volumes need.
 
 ## License
 

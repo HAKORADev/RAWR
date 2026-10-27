@@ -69,6 +69,21 @@ else
     bad "a second run did not recognise the clean folder"
 fi
 
+# ------------------------------------------------------------------
+# The PopCap layout: a trial stub in front of the real game.
+# ------------------------------------------------------------------
+say ""
+say "popcap layout"
+rm -rf "$WORK/pc"
+python3 "$HERE/make_popcap_fixture.py" "$WORK/pc" > /dev/null || { say "could not build the popcap fixture"; fail=$((fail+1)); }
+before=$(stat -c%s "$WORK/pc/FixturePop.exe" 2>/dev/null || stat -f%z "$WORK/pc/FixturePop.exe" 2>/dev/null)
+"$RAWR" "$WORK/pc" > "$WORK/pc.log" 2>&1
+if [ ! -f "$WORK/pc/popcapgame1.exe" ]; then ok "the hidden payload was consumed"; else bad "the hidden payload is still there"; fi
+after=$(stat -c%s "$WORK/pc/FixturePop.exe" 2>/dev/null || stat -f%z "$WORK/pc/FixturePop.exe" 2>/dev/null)
+if [ "$after" != "$before" ]; then ok "the stub was replaced by the real game"; else bad "the stub was not replaced"; fi
+if grep -q 'NoReg="false"' "$WORK/pc/partner.xml" 2>/dev/null; then ok "partner.xml says registered"; else bad "partner.xml still says trial"; fi
+if [ -f "$WORK/pc/CDProtect.exe" ] && [ -f "$WORK/pc/unins000.exe" ]; then ok "the support files were left alone"; else bad "a support file was removed"; fi
+
 say ""
 if [ $fail -eq 0 ]; then
     say "end to end test passed"

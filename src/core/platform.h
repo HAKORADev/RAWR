@@ -10,19 +10,14 @@ namespace platform {
 // True when the running binary carries its dependencies with it.
 bool is_static_build();
 
-// Tools the project needs in order to build RAWR again from source.
-struct Dependency {
-    std::string name;
-    std::string purpose;
-    std::string installHint;
-    bool present = false;
-};
+// The full path of the running executable, so the tool can drop its report
+// next to itself.
+std::string executable_path();
 
-std::vector<Dependency> check_build_dependencies();
-
-// Installs the missing build dependencies. Returns false with a reason when
-// the platform cannot do it automatically.
-bool install_build_dependencies(std::vector<Dependency>& missing, std::string& err);
+// Called before anything is printed. On the Windows shell build there is
+// no console to print to, so the output is redirected to a log file next
+// to the executable. On every other platform this does nothing.
+void prepare_output();
 
 } // namespace platform
 } // namespace rawr

@@ -95,6 +95,13 @@ struct ResourceLeaf {
     Bytes data;
 };
 
+// An icon set: the group directory plus the images it points at.
+struct IconSet {
+    Bytes group;                          // GRPICONDIR + GRPICONDIRENTRY array
+    std::vector<std::pair<uint16_t, Bytes>> images;   // (resource id, image data)
+    uint16_t language = 0x0409;
+};
+
 // Parses a PE image held in memory. Returns false with a reason on failure.
 bool pe_parse(const Bytes& data, PeImage& out, std::string& err);
 
@@ -106,6 +113,31 @@ bool pe_has_resources(const PeImage& pe);
 
 // Reads every resource leaf of the image.
 bool pe_read_resources(const PeImage& pe, std::vector<ResourceLeaf>& out, std::string& err);
+
+// True when the image already carries an icon group. The Windows shell
+// looks for the group called "MAINICON" first, then for the group with
+// id 1, then for the first group it finds.
+bool pe_has_icon_group(const PeImage& pe, std::string& err);
+
+// Writes the given leaves into the image as its resource directory.
+//
+// The image's own resources always win: a leaf is only added when the
+// image does not already carry that exact (type, name) key. That way a
+// wrapper's icon can never shadow the icon the game shipped with.
+//
+// When the image has no resource section a new one is appended. When it
+// has one, the tree is rebuilt inside the existing section when it fits
+// and in a fresh section otherwise.
+bool pe_write_resources(Bytes& image, const std::vector<ResourceLeaf>& leaves, std::string& err);
+
+// Adds an icon set to the image, but only when the image has no icon of
+// its own. The image ids are remapped onto a free range so they can never
+// collide with an icon the game already carries, and the group is
+// registered under the name "MAINICON" and, when that id is free, under
+// id 1 as well - the shell looks for both.
+//
+// Returns true when the icon was added.
+bool pe_add_icon(Bytes& image, const IconSet& icon, std::string& err);
 
 // Builds a complete .rsrc section payload for the given leaves.
 // `base_rva` is the RVA the section will live at; the data entry RVAs are

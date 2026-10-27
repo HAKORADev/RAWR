@@ -6,6 +6,7 @@
 
 #include "common.h"
 #include "pe.h"
+#include "popcap.h"
 
 namespace rawr {
 
@@ -15,12 +16,14 @@ enum class WrapperLayout {
     RwgWithConfig,    // wrapper stub + encrypted .RWG payload + config blob
     DirectExecutable, // the game exe is not wrapped, only the support folder is
     Integrated,       // the wrapper layer is compiled into the game exe itself
+    PopCap,           // a trial stub fronts the real game binary
     Incomplete,       // Reflexive markers present but the payload is missing
 };
 
 struct ReflexiveLayout {
     WrapperLayout layout = WrapperLayout::NotReflexive;
     std::string reason;
+    PopcapResult popcap;
 
     std::string gameDir;
     std::string wrapperExe;      // the wrapper stub (may be *.exe or *.exe.BAK)
@@ -54,6 +57,7 @@ struct UnwrapResult {
     bool dotnet = false;
     bool resourcesRestored = false;
     size_t resourcesRestoredCount = 0;
+    bool registered = false;            // the purchase check was patched
     std::vector<std::string> removedPaths;
     std::vector<std::string> notes;
 };
