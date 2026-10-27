@@ -110,7 +110,11 @@ def main():
             exes = [f for f in os.listdir(work) if f.lower().endswith(".exe")]
             if not exes:
                 continue
-            exe = os.path.join(work, exes[0])
+            # The game is the executable that matches the payload name; a
+            # folder can hold helper programs next to it.
+            stem = os.path.splitext(os.path.basename(rwg))[0].lower()
+            match = [f for f in exes if os.path.splitext(f)[0].lower() == stem]
+            exe = os.path.join(work, match[0] if match else sorted(exes)[0])
             after_groups, after_icons = groups_of(exe)
             err = check(after_groups, after_icons)
             if err:

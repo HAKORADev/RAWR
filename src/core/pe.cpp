@@ -425,7 +425,10 @@ Bytes build_resource_section(const std::vector<ResourceLeaf>& leaves, uint32_t b
     };
 
     // Root directory.
-    writeDirHeader(0, types.size(), 0);
+    size_t rootNamed = 0;
+    for (const TypeGroup& tg : types)
+        if (tg.key.named) ++rootNamed;
+    writeDirHeader(0, types.size(), rootNamed);
     for (size_t i = 0; i < types.size(); ++i) {
         size_t e = 16 + i * 8;
         wr32(section, e, entryNameField(types[i].key.named, types[i].key.id, types[i].key.str,
