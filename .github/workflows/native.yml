@@ -59,7 +59,7 @@ jobs:
         run: |
           set -e
           ./build/rawr --dry-run /nonexistent/path || test $? -eq 1
-          ./build/rawr --dry-run /tmp || test $? -eq 0
+          ./build/rawr --dry-run /tmp || test $? -eq 1
           ./build/rawr version
           ./build/rawr wrappers-list | head -5
 
