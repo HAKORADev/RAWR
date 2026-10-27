@@ -48,10 +48,13 @@ if(MSVC)
   # The shell build: no console window, so it can be used from Explorer
   # without a black box flashing on the screen. Same code path, same
   # behaviour, the output just goes to a file instead of the terminal.
+  #
+  # /MANIFEST:NO stops the linker from generating a manifest of its own;
+  # the one in rawr.rc is the one we want embedded.
   add_executable(rawr src/windows/main.cpp src/windows/platform_win32.cpp
                          src/windows/rawr.rc)
   target_compile_options(rawr PRIVATE /EHsc /utf-8 /W3)
-  target_link_options(rawr PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
+  target_link_options(rawr PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO)
   target_link_libraries(rawr PRIVATE rawr_core)
   if(RAWR_STATIC)
     target_compile_definitions(rawr PRIVATE RAWR_STATIC_BUILD=1)
@@ -71,4 +74,8 @@ if(NOT WIN32)
   target_link_libraries(rawr PRIVATE Threads::Threads)
 endif()
 
-install(TARGETS rawr rawr-console RUNTIME DESTINATION .)
+if(MSVC)
+  install(TARGETS rawr rawr-console RUNTIME DESTINATION .)
+else()
+  install(TARGETS rawr RUNTIME DESTINATION .)
+endif()
