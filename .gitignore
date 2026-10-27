@@ -1,0 +1,12 @@
+build/
+dist/
+results/
+*.o
+*.obj
+*.exe
+*.ilk
+*.pdb
+*.rawrtmp
+.rawr-stage-*/
+__pycache__/
+.DS_Store

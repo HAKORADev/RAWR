@@ -1,0 +1,165 @@
+name: native build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'release version, e.g. 0.0.0 (the tag becomes v0.0.0)'
+        required: true
+      publish:
+        description: 'publish: create/refresh the release and upload the assets'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'tests/**'
+      - '.github/workflows/native.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build python3 file
+
+      - name: build (static, no runtime dependencies)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRAWR_STATIC=ON
+          cmake --build build -j "$(nproc)"
+
+      - name: the binary really is static
+        run: |
+          file build/rawr | tee -a "$GITHUB_STEP_SUMMARY"
+          if ldd build/rawr 2>&1 | grep -q "not a dynamic executable"; then
+            echo "static build confirmed"
+          else
+            echo "the build is not static" >&2
+            ldd build/rawr || true
+            exit 1
+          fi
+
+      - name: built in self test
+        run: ./build/rawr selftest
+
+      - name: end to end test (synthetic fixture)
+        run: ./tests/e2e.sh ./build/rawr
+
+      - name: dry run and error handling
+        run: |
+          set -e
+          ./build/rawr --dry-run /nonexistent/path || test $? -eq 1
+          ./build/rawr --dry-run /tmp || test $? -eq 0
+          ./build/rawr version
+          ./build/rawr deps-check || true
+
+      - name: exe size
+        run: |
+          ls -la build/rawr
+          size=$(stat -c%s build/rawr)
+          if [ "$size" -gt 31457280 ]; then
+            echo "the binary is over 30 MB" >&2
+            exit 1
+          fi
+          echo "binary size: $size bytes"
+
+      - name: collect portable bundle
+        run: |
+          mkdir -p dist/rawr
+          cp build/rawr dist/rawr/
+          cp packaging/linux/cli.sh dist/rawr/
+          cp packaging/linux/install.sh dist/rawr/
+          chmod +x dist/rawr/rawr dist/rawr/cli.sh dist/rawr/install.sh
+          (cd dist && zip -qr ../"rawr_linux_v${{ inputs.version }}.zip" rawr)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rawr-linux
+          path: rawr_linux_v${{ inputs.version }}.zip
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build (static MSVC runtime, no DLL dependencies)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DRAWR_STATIC=ON
+          cmake --build build --config Release -j 4
+
+      - name: built in self test
+        shell: pwsh
+        run: .\build\Release\rawr.exe selftest
+
+      - name: end to end test (synthetic fixture)
+        shell: pwsh
+        run: |
+          $env:Path = "$(Resolve-Path .\build\Release);$env:Path"
+          bash ./tests/e2e.sh ./build/Release/rawr.exe
+
+      - name: dry run and error handling
+        shell: pwsh
+        run: |
+          .\build\Release\rawr.exe --dry-run C:\definitely\not\here
+          if ($LASTEXITCODE -ne 1) { throw "a missing path should exit 1" }
+          .\build\Release\rawr.exe version
+          .\build\Release\rawr.exe deps-check
+          if ($LASTEXITCODE -ne 0) { throw "deps-check should pass" }
+
+      - name: exe size
+        shell: pwsh
+        run: |
+          $f = Get-Item build\Release\rawr.exe
+          $f | Select-Object Name,Length
+          if ($f.Length -gt 31457280) { throw "the binary is over 30 MB" }
+
+      - name: collect portable bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\rawr | Out-Null
+          Copy-Item build\Release\rawr.exe dist\rawr\
+          Copy-Item packaging\windows\cli.bat dist\rawr\
+          Compress-Archive -Path dist\rawr -DestinationPath "rawr_windows_v${{ inputs.version }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rawr-windows
+          path: rawr_windows_v${{ inputs.version }}.zip
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: pkgs
+
+      - name: publish release v${{ inputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ inputs.version }}"
+          NOTES=$(mktemp)
+          awk '/^## \[[0-9]{2}\/{2}\/{3}[0-9]{4}\]/{f=1;next} f&&/^## \[/{exit} f' CHANGELOG.md > "$NOTES"
+          if [ ! -s "$NOTES" ]; then echo "RAWR v${{ inputs.version }}" > "$NOTES"; fi
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --title "RAWR v${{ inputs.version }}" --notes-file "$NOTES"
+          gh release upload "$TAG" \
+            "pkgs/rawr-linux/rawr_linux_v${{ inputs.version }}.zip" \
+            "pkgs/rawr-windows/rawr_windows_v${{ inputs.version }}.zip" \
+            --clobber
+          echo "assets on $TAG:"
+          gh api repos/$GITHUB_REPOSITORY/releases --jq ".[] | select(.tag_name==\"$TAG\") | .assets[] | \"\(.name) \(.size)\""
