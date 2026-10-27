@@ -1,0 +1,2 @@
+/usr/bin/ar qc librawr_core.a CMakeFiles/rawr_core.dir/src/core/cli.cpp.o CMakeFiles/rawr_core.dir/src/core/crc32.cpp.o CMakeFiles/rawr_core.dir/src/core/fsutil.cpp.o CMakeFiles/rawr_core.dir/src/core/pe.cpp.o CMakeFiles/rawr_core.dir/src/core/rwg.cpp.o CMakeFiles/rawr_core.dir/src/core/selftest.cpp.o CMakeFiles/rawr_core.dir/src/core/stream_cipher.cpp.o
+/usr/bin/ranlib librawr_core.a

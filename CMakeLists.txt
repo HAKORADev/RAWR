@@ -10,6 +10,13 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# The runtime library has to be chosen before any target is created, or the
+# static library and the executable end up with different runtimes and the
+# linker complains about multiply defined symbols.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 option(RAWR_STATIC "link the runtime statically so the binary stands alone" ON)
 
 set(RAWR_CORE_SOURCES
@@ -26,7 +33,6 @@ add_library(rawr_core STATIC ${RAWR_CORE_SOURCES})
 target_include_directories(rawr_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 
 if(MSVC)
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   add_executable(rawr src/windows/main.cpp src/windows/platform_win32.cpp)
   target_compile_options(rawr PRIVATE /EHsc /utf-8 /W3)
 else()

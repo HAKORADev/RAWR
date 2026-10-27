@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -static CMakeFiles/rawr.dir/src/linux/main.cpp.o CMakeFiles/rawr.dir/src/linux/platform_posix.cpp.o -o rawr  librawr_core.a
