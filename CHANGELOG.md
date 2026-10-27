@@ -36,7 +36,7 @@
 - **317 unwrap cleanly, 17 are the integrated layout and are now marked registered, and there are no unexpected failures** - every folder either comes out clean or comes out explained
 - Wrapper build coverage, oldest to newest: **123, 124, 131, 142, 143, 167, 172, 173**
 - A sanitizer build (address and undefined behaviour) runs the whole corpus with no findings
-- The icon is checked over the whole corpus: for every game that shipped with an icon, the shell still resolves that same icon after the unwrap
+- The icon is checked over the whole corpus: **267 games, 265 kept the icon they shipped with, 2 got the wrapper's icon because they never had one, and none is broken.** The check emulates the way the Windows shell looks an icon up, which is the only way to catch a tree that a resource viewer would happily misread
 - The program recovered from the `.FFF` generation is byte identical to the same program recovered from the retail installer, apart from the PE header fields that have to change when a section is added
 - The Windows build is exercised end to end in CI against the synthetic fixture, so the binary that ships has actually unwrapped a game
 
